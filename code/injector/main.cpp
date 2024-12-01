@@ -11,6 +11,10 @@ int main(int argc, char* argv[]) {
     //tmp file setting
     CopyFileW(L"tmp_cat.jpg", L"cat.jpg", FALSE);
     DeleteFileW(L"cat.jpg.bbawasted");
+    CopyFileW(L"tmp_cat.jpg", L"dog.jpg", FALSE);
+    DeleteFileW(L"dog.jpg.bbawasted");
+    CopyFileW(L"tmp_cat.jpg", L"meow.jpg", FALSE);
+    DeleteFileW(L"meow.jpg.bbawasted");
 
 
     // Structures required to create a process
