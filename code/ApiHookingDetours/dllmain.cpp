@@ -5,6 +5,8 @@
 #include "detours.h"
 #include <stdio.h>
 #include <shlwapi.h>
+#include <unordered_map>
+#include <string>
 
 typedef struct _IO_STATUS_BLOCK {
     NTSTATUS Status;
@@ -61,6 +63,10 @@ typedef NTSTATUS(WINAPI* NtCreateFile_t)(
 ZwOpenFile_t Real_ZwOpenFile = NULL;
 NtCreateFile_t Real_NtCreateFile = NULL;
 
+// Global map to store remaining substrings and their occurrences
+std::unordered_map<std::wstring, int> remaining_map;
+std::wstring previous_fullPath;
+
 // Function to resolve relative paths to full paths
 void ResolveFullPath(LPCWSTR relativePath, LPWSTR fullPath, DWORD fullPathSize) {
     if (PathIsRelativeW(relativePath)) {
@@ -68,6 +74,62 @@ void ResolveFullPath(LPCWSTR relativePath, LPWSTR fullPath, DWORD fullPathSize) 
     }
     else {
         wcsncpy_s(fullPath, fullPathSize, relativePath, _TRUNCATE);
+    }
+}
+
+// Function to find and extract the remaining substring
+std::wstring extract_remaining(const std::wstring& str1, const std::wstring& str2) {
+    const std::wstring* shorter;
+    const std::wstring* longer;
+
+    // Determine the shorter and longer string
+    if (str1.length() < str2.length()) {
+        shorter = &str1;
+        longer = &str2;
+    }
+    else {
+        return L"";
+    }
+
+    // Find the position of the shorter string in the longer string
+    size_t pos = longer->find(*shorter);
+    if (pos == std::wstring::npos) {
+        // Shorter string is not part of the longer string
+        return L"";
+    }
+
+    // Calculate the size of the remaining string
+    size_t remaining_size = longer->length() - shorter->length();
+    std::wstring remaining(remaining_size, L'\0');
+
+    // Copy the parts of the longer string excluding the shorter string
+    size_t prefix_len = pos;
+    remaining = longer->substr(0, prefix_len) + longer->substr(pos + shorter->length());
+
+    return remaining;
+}
+
+// Function to detect ransomware using the map
+void detect_ransomware(const std::wstring& path1, const std::wstring& path2) {
+    std::wstring remaining = extract_remaining(path1, path2);
+
+    if (!remaining.empty()) {
+        remaining_map[remaining]++;
+        if (remaining_map[remaining] >= 3) {
+            wprintf(L"Potential ransomware pattern detected: %ls\n", remaining.c_str());
+            ExitProcess(0);
+        }
+    }
+}
+
+// Function to remove the \\??\\ prefix
+void RemovePrefix(LPWSTR fullPath) {
+    const WCHAR prefix[] = L"\\??\\";
+    size_t prefix_len = wcslen(prefix);
+    size_t fullPath_len = wcslen(fullPath);
+
+    if (fullPath_len >= prefix_len && wcsncmp(fullPath, prefix, prefix_len) == 0) {
+        memmove(fullPath, fullPath + prefix_len, (fullPath_len - prefix_len + 1) * sizeof(WCHAR));
     }
 }
 
@@ -89,9 +151,19 @@ NTSTATUS WINAPI Hooked_ZwOpenFile(
         ResolveFullPath(fileName, fullPath, MAX_PATH);
     }
 
+    // Remove the \\??\\ prefix
+    RemovePrefix(fullPath);
+
     // Log the file access attempt
     wprintf(L"[ZwOpenFile Hook] File Name: %ls, Full Path: %ls, Desired Access: 0x%08X\n",
         fileName, fullPath, DesiredAccess);
+
+    // Detect ransomware pattern
+    
+    if (!previous_fullPath.empty()) {
+        detect_ransomware(previous_fullPath, fullPath);
+    }
+    previous_fullPath = fullPath;
 
     // Call the original ZwOpenFile
     return Real_ZwOpenFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, ShareAccess, OpenOptions);
@@ -120,9 +192,18 @@ NTSTATUS WINAPI Hooked_NtCreateFile(
         ResolveFullPath(fileName, fullPath, MAX_PATH);
     }
 
+    // Remove the \\??\\ prefix
+    RemovePrefix(fullPath);
+
     // Log the file creation attempt
     wprintf(L"[NtCreateFile Hook] File Name: %ls, Full Path: %ls, Desired Access: 0x%08X\n",
         fileName, fullPath, DesiredAccess);
+
+    // Detect ransomware pattern
+    if (!previous_fullPath.empty()) {
+        detect_ransomware(previous_fullPath, fullPath);
+    }
+    previous_fullPath = fullPath;
 
     // Call the original NtCreateFile
     return Real_NtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, EaBuffer, EaLength);
