@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <shlwapi.h>
 #include <unordered_map>
+#include <vector>
 #include <string>
 
 typedef struct _IO_STATUS_BLOCK {
@@ -63,9 +64,36 @@ typedef NTSTATUS(WINAPI* NtCreateFile_t)(
 ZwOpenFile_t Real_ZwOpenFile = NULL;
 NtCreateFile_t Real_NtCreateFile = NULL;
 
+
+NTSTATUS WINAPI Hooked_NtCreateFile(
+    PHANDLE FileHandle,
+    ACCESS_MASK DesiredAccess,
+    POBJECT_ATTRIBUTES ObjectAttributes,
+    PIO_STATUS_BLOCK IoStatusBlock,
+    ULONG AllocationSize,
+    ULONG FileAttributes,
+    ULONG ShareAccess,
+    ULONG CreateDisposition,
+    ULONG CreateOptions,
+    PVOID EaBuffer,
+    ULONG EaLength
+);
+
+NTSTATUS WINAPI Hooked_ZwOpenFile(
+    PHANDLE FileHandle,
+    ACCESS_MASK DesiredAccess,
+    POBJECT_ATTRIBUTES ObjectAttributes,
+    PIO_STATUS_BLOCK IoStatusBlock,
+    ULONG ShareAccess,
+    ULONG OpenOptions
+);
+
 // Global map to store remaining substrings and their occurrences
 std::unordered_map<std::wstring, int> remaining_map;
 std::wstring previous_fullPath;
+
+// Global vector to track backup files
+std::vector<std::pair<std::wstring, std::wstring>> backup_files;
 
 // Function to resolve relative paths to full paths
 void ResolveFullPath(LPCWSTR relativePath, LPWSTR fullPath, DWORD fullPathSize) {
@@ -82,7 +110,6 @@ std::wstring extract_remaining(const std::wstring& str1, const std::wstring& str
     const std::wstring* shorter;
     const std::wstring* longer;
 
-    // Determine the shorter and longer string
     if (str1.length() < str2.length()) {
         shorter = &str1;
         longer = &str2;
@@ -91,38 +118,105 @@ std::wstring extract_remaining(const std::wstring& str1, const std::wstring& str
         return L"";
     }
 
-    // Find the position of the shorter string in the longer string
     size_t pos = longer->find(*shorter);
     if (pos == std::wstring::npos) {
-        // Shorter string is not part of the longer string
         return L"";
     }
 
-    // Calculate the size of the remaining string
-    size_t remaining_size = longer->length() - shorter->length();
-    std::wstring remaining(remaining_size, L'\0');
-
-    // Copy the parts of the longer string excluding the shorter string
-    size_t prefix_len = pos;
-    remaining = longer->substr(0, prefix_len) + longer->substr(pos + shorter->length());
-
-    return remaining;
+    return longer->substr(0, pos) + longer->substr(pos + shorter->length());
 }
 
-// Function to detect ransomware using the map
+LONG InstallHook() {
+
+    LONG error;
+    // Attach the hooks
+    OutputDebugString(TEXT("Attaching ZwOpenFile and NtCreateFile Hooks\n"));
+    DetourRestoreAfterWith();
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+
+    // Get the address of ZwOpenFile and NtCreateFile from ntdll.dll
+    Real_ZwOpenFile = (ZwOpenFile_t)GetProcAddress(GetModuleHandle(TEXT("ntdll.dll")), "ZwOpenFile");
+    Real_NtCreateFile = (NtCreateFile_t)GetProcAddress(GetModuleHandle(TEXT("ntdll.dll")), "NtCreateFile");
+
+    if (Real_ZwOpenFile) {
+        DetourAttach(&(PVOID&)Real_ZwOpenFile, Hooked_ZwOpenFile);
+    }
+    if (Real_NtCreateFile) {
+        DetourAttach(&(PVOID&)Real_NtCreateFile, Hooked_NtCreateFile);
+    }
+
+    error = DetourTransactionCommit();
+    return error;
+
+}
+
+LONG RemoveHook() {
+
+    LONG error;
+    // Detach the hooks
+    OutputDebugString(TEXT("Detaching ZwOpenFile and NtCreateFile Hooks\n"));
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+
+    if (Real_ZwOpenFile) {
+        DetourDetach(&(PVOID&)Real_ZwOpenFile, Hooked_ZwOpenFile);
+    }
+    if (Real_NtCreateFile) {
+        DetourDetach(&(PVOID&)Real_NtCreateFile, Hooked_NtCreateFile);
+    }
+
+    error = DetourTransactionCommit();
+    return error;
+}
+
+
+// Function to detect ransomware and handle backups
 void detect_ransomware(const std::wstring& path1, const std::wstring& path2) {
     std::wstring remaining = extract_remaining(path1, path2);
 
     if (!remaining.empty()) {
         remaining_map[remaining]++;
+
+        // Prepare the backup
+        std::wstring tempPath = L"C:\\temp\\" + std::wstring(PathFindFileNameW(path1.c_str()));
+
+        backup_files.emplace_back(path1, tempPath);
+        wprintf(L"Backed up: %ls to %ls\n", path1.c_str(), tempPath.c_str());
+
         if (remaining_map[remaining] >= 3) {
+
+            RemoveHook();
             wprintf(L"Potential ransomware pattern detected: %ls\n", remaining.c_str());
+
+            // Restore backed-up files
+            for (const auto& backup : backup_files) {
+                const auto& originalPath = backup.first;
+                const auto& tempPath = backup.second;
+
+                if (CopyFileW(tempPath.c_str(), originalPath.c_str(), FALSE)) {
+                    wprintf(L"Restored: %ls to %ls\n", tempPath.c_str(), originalPath.c_str());
+                    //DeleteFileW(tempPath.c_str());
+                }
+                else {
+                    wprintf(L"Failed to restore: %ls\n", tempPath.c_str());
+                }
+            }
+
+            // Exit process to simulate protection (can be removed for testing)
             ExitProcess(0);
         }
+
+       
+    
+        
+        
+      
+
     }
 }
 
-// Function to remove the \\??\\ prefix
+// Function to remove the \??\ prefix
 void RemovePrefix(LPWSTR fullPath) {
     const WCHAR prefix[] = L"\\??\\";
     size_t prefix_len = wcslen(prefix);
@@ -142,6 +236,8 @@ NTSTATUS WINAPI Hooked_ZwOpenFile(
     ULONG ShareAccess,
     ULONG OpenOptions
 ) {
+
+    
     WCHAR fileName[MAX_PATH] = L"[Unknown]";
     WCHAR fullPath[MAX_PATH] = L"[Unknown]";
 
@@ -154,16 +250,28 @@ NTSTATUS WINAPI Hooked_ZwOpenFile(
     // Remove the \\??\\ prefix
     RemovePrefix(fullPath);
 
+
+    RemoveHook();
+    // Prepare the backup
+    std::wstring tempPath = L"C:\\temp\\" + std::wstring(PathFindFileNameW(fullPath));
+    if (CopyFileW(fullPath, tempPath.c_str(), FALSE)) {
+        wprintf(L"Backed up: %ls to %ls\n", fullPath, tempPath.c_str());
+    }
+    else {
+        wprintf(L"Failed to back up: %ls, Error: %lu\n", fullPath, GetLastError());
+
+    }
+    InstallHook();
+
     // Log the file access attempt
     wprintf(L"[ZwOpenFile Hook] File Name: %ls, Full Path: %ls, Desired Access: 0x%08X\n",
         fileName, fullPath, DesiredAccess);
 
-    // Detect ransomware pattern
-    
-    if (!previous_fullPath.empty()) {
+    if (!(previous_fullPath.empty())) {
         detect_ransomware(previous_fullPath, fullPath);
     }
     previous_fullPath = fullPath;
+
 
     // Call the original ZwOpenFile
     return Real_ZwOpenFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, ShareAccess, OpenOptions);
@@ -183,6 +291,7 @@ NTSTATUS WINAPI Hooked_NtCreateFile(
     PVOID EaBuffer,
     ULONG EaLength
 ) {
+
     WCHAR fileName[MAX_PATH] = L"[Unknown]";
     WCHAR fullPath[MAX_PATH] = L"[Unknown]";
 
@@ -199,11 +308,13 @@ NTSTATUS WINAPI Hooked_NtCreateFile(
     wprintf(L"[NtCreateFile Hook] File Name: %ls, Full Path: %ls, Desired Access: 0x%08X\n",
         fileName, fullPath, DesiredAccess);
 
+    
     // Detect ransomware pattern
-    if (!previous_fullPath.empty()) {
+    if (!(previous_fullPath.empty())) {
         detect_ransomware(previous_fullPath, fullPath);
     }
     previous_fullPath = fullPath;
+   
 
     // Call the original NtCreateFile
     return Real_NtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, EaBuffer, EaLength);
@@ -214,24 +325,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
-        // Attach the hooks
-        OutputDebugString(TEXT("Attaching ZwOpenFile and NtCreateFile Hooks\n"));
-        DetourRestoreAfterWith();
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
 
-        // Get the address of ZwOpenFile and NtCreateFile from ntdll.dll
-        Real_ZwOpenFile = (ZwOpenFile_t)GetProcAddress(GetModuleHandle(TEXT("ntdll.dll")), "ZwOpenFile");
-        Real_NtCreateFile = (NtCreateFile_t)GetProcAddress(GetModuleHandle(TEXT("ntdll.dll")), "NtCreateFile");
-
-        if (Real_ZwOpenFile) {
-            DetourAttach(&(PVOID&)Real_ZwOpenFile, Hooked_ZwOpenFile);
-        }
-        if (Real_NtCreateFile) {
-            DetourAttach(&(PVOID&)Real_NtCreateFile, Hooked_NtCreateFile);
-        }
-
-        error = DetourTransactionCommit();
+        error = InstallHook();
 
         if (error == NO_ERROR) {
             OutputDebugString(TEXT("Hooks Attached Successfully\n"));
@@ -242,20 +337,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
         break;
     case DLL_PROCESS_DETACH:
-        // Detach the hooks
-        OutputDebugString(TEXT("Detaching ZwOpenFile and NtCreateFile Hooks\n"));
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
 
-        if (Real_ZwOpenFile) {
-            DetourDetach(&(PVOID&)Real_ZwOpenFile, Hooked_ZwOpenFile);
-        }
-        if (Real_NtCreateFile) {
-            DetourDetach(&(PVOID&)Real_NtCreateFile, Hooked_NtCreateFile);
-        }
-
-        error = DetourTransactionCommit();
-
+        error = RemoveHook();
+        
         if (error == NO_ERROR) {
             OutputDebugString(TEXT("Hooks Detached Successfully\n"));
         }
