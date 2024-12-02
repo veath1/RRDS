@@ -46,37 +46,30 @@ typedef NTSTATUS(WINAPI* ZwOpenFile_t)(
     ULONG OpenOptions
     );
 
-typedef NTSTATUS(WINAPI* NtCreateFile_t)(
-    PHANDLE FileHandle,
-    ACCESS_MASK DesiredAccess,
-    POBJECT_ATTRIBUTES ObjectAttributes,
-    PIO_STATUS_BLOCK IoStatusBlock,
-    ULONG AllocationSize,
-    ULONG FileAttributes,
-    ULONG ShareAccess,
-    ULONG CreateDisposition,
-    ULONG CreateOptions,
-    PVOID EaBuffer,
-    ULONG EaLength
+// Define the prototype for CreateFileW
+typedef HANDLE(WINAPI* CreateFileW_t)(
+    LPCWSTR lpFileName,
+    DWORD dwDesiredAccess,
+    DWORD dwShareMode,
+    LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+    DWORD dwCreationDisposition,
+    DWORD dwFlagsAndAttributes,
+    HANDLE hTemplateFile
     );
 
 // Pointers to the original functions
 ZwOpenFile_t Real_ZwOpenFile = NULL;
-NtCreateFile_t Real_NtCreateFile = NULL;
+CreateFileW_t Real_CreateFileW = NULL;
 
 
-NTSTATUS WINAPI Hooked_NtCreateFile(
-    PHANDLE FileHandle,
-    ACCESS_MASK DesiredAccess,
-    POBJECT_ATTRIBUTES ObjectAttributes,
-    PIO_STATUS_BLOCK IoStatusBlock,
-    ULONG AllocationSize,
-    ULONG FileAttributes,
-    ULONG ShareAccess,
-    ULONG CreateDisposition,
-    ULONG CreateOptions,
-    PVOID EaBuffer,
-    ULONG EaLength
+HANDLE WINAPI Hooked_CreateFileW(
+    LPCWSTR lpFileName,
+    DWORD dwDesiredAccess,
+    DWORD dwShareMode,
+    LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+    DWORD dwCreationDisposition,
+    DWORD dwFlagsAndAttributes,
+    HANDLE hTemplateFile
 );
 
 NTSTATUS WINAPI Hooked_ZwOpenFile(
@@ -138,13 +131,13 @@ LONG InstallHook() {
 
     // Get the address of ZwOpenFile and NtCreateFile from ntdll.dll
     Real_ZwOpenFile = (ZwOpenFile_t)GetProcAddress(GetModuleHandle(TEXT("ntdll.dll")), "ZwOpenFile");
-    Real_NtCreateFile = (NtCreateFile_t)GetProcAddress(GetModuleHandle(TEXT("ntdll.dll")), "NtCreateFile");
+    Real_CreateFileW = (CreateFileW_t)GetProcAddress(GetModuleHandle(TEXT("kernel32.dll")), "CreateFileW");
 
     if (Real_ZwOpenFile) {
         DetourAttach(&(PVOID&)Real_ZwOpenFile, Hooked_ZwOpenFile);
     }
-    if (Real_NtCreateFile) {
-        DetourAttach(&(PVOID&)Real_NtCreateFile, Hooked_NtCreateFile);
+    if (Real_CreateFileW) {
+        DetourAttach(&(PVOID&)Real_CreateFileW, Hooked_CreateFileW);
     }
 
     error = DetourTransactionCommit();
@@ -163,8 +156,8 @@ LONG RemoveHook() {
     if (Real_ZwOpenFile) {
         DetourDetach(&(PVOID&)Real_ZwOpenFile, Hooked_ZwOpenFile);
     }
-    if (Real_NtCreateFile) {
-        DetourDetach(&(PVOID&)Real_NtCreateFile, Hooked_NtCreateFile);
+    if (Real_CreateFileW) {
+        DetourDetach(&(PVOID&)Real_CreateFileW, Hooked_CreateFileW);
     }
 
     error = DetourTransactionCommit();
@@ -207,13 +200,6 @@ void detect_ransomware(const std::wstring& path1, const std::wstring& path2) {
             // Exit process to simulate protection (can be removed for testing)
             ExitProcess(0);
         }
-
-       
-    
-        
-        
-      
-
     }
 }
 
@@ -251,8 +237,53 @@ NTSTATUS WINAPI Hooked_ZwOpenFile(
     // Remove the \\??\\ prefix
     RemovePrefix(fullPath);
 
+    // Log the file access attempt
+    wprintf(L"[ZwOpenFile Hook] File Name: %ls, Full Path: %ls, Desired Access: 0x%08X\n",
+        fileName, fullPath, DesiredAccess);
 
     RemoveHook();
+    // Prepare the backup
+    std::wstring tempPath = TMPPath + std::wstring(PathFindFileNameW(fullPath));
+    if (CopyFileW(fullPath, tempPath.c_str(), FALSE)) {
+        wprintf(L"Backed up: %ls to %ls\n", fullPath, tempPath.c_str());
+
+        if (!(previous_fullPath.empty())) {
+            detect_ransomware(previous_fullPath, fullPath);
+        }
+        previous_fullPath = fullPath;
+    }
+    else {
+        //wprintf(L"Failed to back up: %ls, Error: %lu\n", fullPath, GetLastError());
+
+    }
+    InstallHook();
+
+
+
+
+    // Call the original ZwOpenFile
+    return Real_ZwOpenFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, ShareAccess, OpenOptions);
+}
+
+// Hooked CreateFileW function
+HANDLE WINAPI Hooked_CreateFileW(
+    LPCWSTR lpFileName,
+    DWORD dwDesiredAccess,
+    DWORD dwShareMode,
+    LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+    DWORD dwCreationDisposition,
+    DWORD dwFlagsAndAttributes,
+    HANDLE hTemplateFile
+) {
+    WCHAR fullPath[MAX_PATH] = L"[Unknown]";
+
+    // Resolve the full path
+    ResolveFullPath(lpFileName, fullPath, MAX_PATH);
+
+    // Log the file access attempt
+    wprintf(L"[CreateFileW Hook] File Name: %ls, Desired Access: 0x%08X\n",
+        fullPath, dwDesiredAccess);
+
     // Prepare the backup
     std::wstring tempPath = TMPPath + std::wstring(PathFindFileNameW(fullPath));
     if (CopyFileW(fullPath, tempPath.c_str(), FALSE)) {
@@ -260,65 +291,17 @@ NTSTATUS WINAPI Hooked_ZwOpenFile(
     }
     else {
         wprintf(L"Failed to back up: %ls, Error: %lu\n", fullPath, GetLastError());
-
-    }
-    InstallHook();
-
-    // Log the file access attempt
-    wprintf(L"[ZwOpenFile Hook] File Name: %ls, Full Path: %ls, Desired Access: 0x%08X\n",
-        fileName, fullPath, DesiredAccess);
-
-    if (!(previous_fullPath.empty())) {
-        detect_ransomware(previous_fullPath, fullPath);
-    }
-    previous_fullPath = fullPath;
-
-
-    // Call the original ZwOpenFile
-    return Real_ZwOpenFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, ShareAccess, OpenOptions);
-}
-
-// Hooked NtCreateFile function
-NTSTATUS WINAPI Hooked_NtCreateFile(
-    PHANDLE FileHandle,
-    ACCESS_MASK DesiredAccess,
-    POBJECT_ATTRIBUTES ObjectAttributes,
-    PIO_STATUS_BLOCK IoStatusBlock,
-    ULONG AllocationSize,
-    ULONG FileAttributes,
-    ULONG ShareAccess,
-    ULONG CreateDisposition,
-    ULONG CreateOptions,
-    PVOID EaBuffer,
-    ULONG EaLength
-) {
-
-    WCHAR fileName[MAX_PATH] = L"[Unknown]";
-    WCHAR fullPath[MAX_PATH] = L"[Unknown]";
-
-    // Try to retrieve the file name if possible
-    if (ObjectAttributes && ObjectAttributes->ObjectName && ObjectAttributes->ObjectName->Buffer) {
-        wcsncpy_s(fileName, ObjectAttributes->ObjectName->Buffer, ObjectAttributes->ObjectName->Length / sizeof(WCHAR));
-        ResolveFullPath(fileName, fullPath, MAX_PATH);
     }
 
-    // Remove the \\??\\ prefix
-    RemovePrefix(fullPath);
-
-    // Log the file creation attempt
-    wprintf(L"[NtCreateFile Hook] File Name: %ls, Full Path: %ls, Desired Access: 0x%08X\n",
-        fileName, fullPath, DesiredAccess);
-
-    
     // Detect ransomware pattern
-    if (!(previous_fullPath.empty())) {
+    if (!previous_fullPath.empty()) {
         detect_ransomware(previous_fullPath, fullPath);
     }
     previous_fullPath = fullPath;
-   
 
-    // Call the original NtCreateFile
-    return Real_NtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, EaBuffer, EaLength);
+    // Call the original CreateFileW
+    return Real_CreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
+        dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
