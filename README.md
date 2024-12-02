@@ -2,15 +2,15 @@
 Real-time Ransomware Defense System through Windows-based User-level File Event Monitoring
 
 ---
-This code implements a system for detecting ransomware behavior and providing recovery mechanisms by hooking two critical Windows API functions: `ZwOpenFile` and `NtCreateFile`. These functions are commonly used for file creation and access, making them suitable targets for monitoring ransomware activity. Below is an analysis of the ransomware detection logic and the recovery process:
+This code implements a system for detecting ransomware behavior and providing recovery mechanisms by hooking two critical Windows API functions: `ZwOpenFile` and `CreateFileW`. These functions are commonly used for file creation and access, making them suitable targets for monitoring ransomware activity. Below is an analysis of the ransomware detection logic and the recovery process:
 
 ---
 
 # **Ransomware Detection Logic**
 
 1. **Hooking Mechanism:**
-   - The code uses the [Detours library](https://github.com/microsoft/Detours) to attach hooks to `ZwOpenFile` and `NtCreateFile` functions in `ntdll.dll`.
-   - The hooks redirect calls to these functions through `Hooked_ZwOpenFile` and `Hooked_NtCreateFile`, where custom logic is applied.
+   - The code uses the [Detours library](https://github.com/microsoft/Detours) to attach hooks to `ZwOpenFile` and `CreateFileW` functions in `ntdll.dll` and `kernel32.dll`.
+   - The hooks redirect calls to these functions through `Hooked_ZwOpenFile` and `Hooked_CreateFileW`, where custom logic is applied.
 
 2. **File Activity Monitoring:**
    - Both hooks capture information about file access and creation requests, such as:
@@ -48,9 +48,9 @@ This code implements a system for detecting ransomware behavior and providing re
 ### **Core Functions Overview**
 
 1. **`InstallHook` and `RemoveHook`:**
-   - Manage the attachment and detachment of hooks for `ZwOpenFile` and `NtCreateFile`.
+   - Manage the attachment and detachment of hooks for `ZwOpenFile` and `CreateFileW`.
 
-2. **`Hooked_ZwOpenFile` and `Hooked_NtCreateFile`:**
+2. **`Hooked_ZwOpenFile` and `Hooked_CreateFileW`:**
    - Monitor file operations, log details, and check for ransomware patterns.
    - Backup files before allowing operations to proceed.
 
@@ -86,7 +86,9 @@ According to the link above, the ransomware changes the name of the original bin
 So we created a simple poc ransomware based on the content. (/code/case1_ransomeware_test)
 and, You can hook the code through dll engagement to identify ransomware behavior and extensions and even recover it. Attached is the poc video below.
 
-https://github.com/user-attachments/assets/f96dc695-f396-419d-a624-99b03335b679
+
+https://github.com/user-attachments/assets/61564a25-a857-4e51-8b0c-59612a652952
+
 
 # References
 - [microsoft/Detours](https://github.com/microsoft/Detours)
