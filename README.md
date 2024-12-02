@@ -75,6 +75,8 @@ This code implements a system for detecting ransomware behavior and providing re
 
 This approach provides a robust mechanism for detecting and mitigating ransomware attacks, although it is tailored for a controlled testing environment and may require additional refinement for real-world deployment.
 
+---
+
 # case1 - [WastedLocker’s techniques point to a familiar heritage](https://news.sophos.com/en-us/2020/08/04/wastedlocker-techniques-point-to-a-familiar-heritage/)
 
 According to the link above, the ransomware changes the name of the original binary to MoveFileW api by adding the .bbawasted extension.
