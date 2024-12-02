@@ -124,12 +124,12 @@ LONG InstallHook() {
 
     LONG error;
     // Attach the hooks
-    OutputDebugString(TEXT("Attaching ZwOpenFile and NtCreateFile Hooks\n"));
+    OutputDebugString(TEXT("Attaching ZwOpenFile and CreateFileW Hooks\n"));
     DetourRestoreAfterWith();
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
 
-    // Get the address of ZwOpenFile and NtCreateFile from ntdll.dll
+    // Get the address of ZwOpenFile and CreateFileW from ntdll.dll
     Real_ZwOpenFile = (ZwOpenFile_t)GetProcAddress(GetModuleHandle(TEXT("ntdll.dll")), "ZwOpenFile");
     Real_CreateFileW = (CreateFileW_t)GetProcAddress(GetModuleHandle(TEXT("kernel32.dll")), "CreateFileW");
 
@@ -149,7 +149,7 @@ LONG RemoveHook() {
 
     LONG error;
     // Detach the hooks
-    OutputDebugString(TEXT("Detaching ZwOpenFile and NtCreateFile Hooks\n"));
+    OutputDebugString(TEXT("Detaching ZwOpenFile and CreateFileW Hooks\n"));
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
 
