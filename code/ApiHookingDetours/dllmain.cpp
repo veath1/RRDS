@@ -294,7 +294,7 @@ HANDLE WINAPI Hooked_CreateFileW(
     }
 
     // Detect ransomware pattern
-    if (!previous_fullPath.empty()) {
+    if (!(previous_fullPath.empty())) {
         detect_ransomware(previous_fullPath, fullPath);
     }
     previous_fullPath = fullPath;
