@@ -91,6 +91,7 @@ NTSTATUS WINAPI Hooked_ZwOpenFile(
 // Global map to store remaining substrings and their occurrences
 std::unordered_map<std::wstring, int> remaining_map;
 std::wstring previous_fullPath;
+std::wstring TMPPath = L"C:\\temp\\";
 
 // Global vector to track backup files
 std::vector<std::pair<std::wstring, std::wstring>> backup_files;
@@ -179,7 +180,7 @@ void detect_ransomware(const std::wstring& path1, const std::wstring& path2) {
         remaining_map[remaining]++;
 
         // Prepare the backup
-        std::wstring tempPath = L"C:\\temp\\" + std::wstring(PathFindFileNameW(path1.c_str()));
+        std::wstring tempPath = TMPPath + std::wstring(PathFindFileNameW(path1.c_str()));
 
         backup_files.emplace_back(path1, tempPath);
         wprintf(L"Backed up: %ls to %ls\n", path1.c_str(), tempPath.c_str());
@@ -253,7 +254,7 @@ NTSTATUS WINAPI Hooked_ZwOpenFile(
 
     RemoveHook();
     // Prepare the backup
-    std::wstring tempPath = L"C:\\temp\\" + std::wstring(PathFindFileNameW(fullPath));
+    std::wstring tempPath = TMPPath + std::wstring(PathFindFileNameW(fullPath));
     if (CopyFileW(fullPath, tempPath.c_str(), FALSE)) {
         wprintf(L"Backed up: %ls to %ls\n", fullPath, tempPath.c_str());
     }
@@ -325,6 +326,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
+
+        CreateDirectoryW(TMPPath.c_str(), NULL);
 
         error = InstallHook();
 
