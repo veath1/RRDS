@@ -176,7 +176,7 @@ void detect_ransomware(const std::wstring& path1, const std::wstring& path2) {
         std::wstring tempPath = TMPPath + std::wstring(PathFindFileNameW(path1.c_str()));
 
         backup_files.emplace_back(path1, tempPath);
-        wprintf(L"Backed up: %ls to %ls\n", path1.c_str(), tempPath.c_str());
+        wprintf(L"Make a list: %ls to %ls\n", path1.c_str(), tempPath.c_str());
 
         if (remaining_map[remaining] >= 3) {
 
@@ -224,7 +224,6 @@ NTSTATUS WINAPI Hooked_ZwOpenFile(
     ULONG OpenOptions
 ) {
 
-    
     WCHAR fileName[MAX_PATH] = L"[Unknown]";
     WCHAR fullPath[MAX_PATH] = L"[Unknown]";
 
@@ -247,6 +246,7 @@ NTSTATUS WINAPI Hooked_ZwOpenFile(
     if (CopyFileW(fullPath, tempPath.c_str(), FALSE)) {
         wprintf(L"Backed up: %ls to %ls\n", fullPath, tempPath.c_str());
 
+        // Detect ransomware pattern
         if (!(previous_fullPath.empty())) {
             detect_ransomware(previous_fullPath, fullPath);
         }
@@ -257,9 +257,6 @@ NTSTATUS WINAPI Hooked_ZwOpenFile(
 
     }
     InstallHook();
-
-
-
 
     // Call the original ZwOpenFile
     return Real_ZwOpenFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, ShareAccess, OpenOptions);
@@ -288,16 +285,18 @@ HANDLE WINAPI Hooked_CreateFileW(
     std::wstring tempPath = TMPPath + std::wstring(PathFindFileNameW(fullPath));
     if (CopyFileW(fullPath, tempPath.c_str(), FALSE)) {
         wprintf(L"Backed up: %ls to %ls\n", fullPath, tempPath.c_str());
+
+        // Detect ransomware pattern
+        if (!(previous_fullPath.empty())) {
+            detect_ransomware(previous_fullPath, fullPath);
+        }
+        previous_fullPath = fullPath;
     }
     else {
         wprintf(L"Failed to back up: %ls, Error: %lu\n", fullPath, GetLastError());
     }
 
-    // Detect ransomware pattern
-    if (!(previous_fullPath.empty())) {
-        detect_ransomware(previous_fullPath, fullPath);
-    }
-    previous_fullPath = fullPath;
+    
 
     // Call the original CreateFileW
     return Real_CreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
@@ -325,7 +324,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     case DLL_PROCESS_DETACH:
 
         error = RemoveHook();
-        
+
         if (error == NO_ERROR) {
             OutputDebugString(TEXT("Hooks Detached Successfully\n"));
         }
